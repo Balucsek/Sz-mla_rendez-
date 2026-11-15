@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 
 namespace InvoiceManager.Services;
@@ -10,6 +12,11 @@ public sealed class AppSettings
     public string DestinationFolder { get; set; } = string.Empty;
     public string ScanFolder { get; set; } = string.Empty;
     public string ScannerDeviceId { get; set; } = string.Empty;
+    public bool AiAnalysisEnabled { get; set; }
+    public string LlmModel { get; set; } = OllamaModelOptions.All[0].Name;
+    public string AiAnalysisInstruction { get; set; } = OllamaService.DefaultAnalysisInstruction;
+    public int AiImageDpi { get; set; } = PdfPageImageRenderer.DefaultDpi;
+    public List<string> InvoiceNamePattern { get; set; } = InvoiceNameFields.CreateDefaultPattern();
 
     public static AppSettings CreateDefault()
     {
@@ -51,6 +58,30 @@ public sealed class UserSettingsService
         if (string.IsNullOrWhiteSpace(settings.ScanFolder))
         {
             settings.ScanFolder = AppSettings.CreateDefault().ScanFolder;
+        }
+
+        if (string.IsNullOrWhiteSpace(settings.LlmModel))
+        {
+            settings.LlmModel = OllamaModelOptions.All[0].Name;
+        }
+
+        if (string.IsNullOrWhiteSpace(settings.AiAnalysisInstruction) ||
+            string.Equals(
+                settings.AiAnalysisInstruction,
+                OllamaService.PreviousDefaultAnalysisInstruction,
+                StringComparison.Ordinal))
+        {
+            settings.AiAnalysisInstruction = OllamaService.DefaultAnalysisInstruction;
+        }
+
+        if (!PdfPageImageRenderer.SupportedDpiValues.Contains(settings.AiImageDpi))
+        {
+            settings.AiImageDpi = PdfPageImageRenderer.DefaultDpi;
+        }
+
+        if (settings.InvoiceNamePattern is null || settings.InvoiceNamePattern.Count == 0)
+        {
+            settings.InvoiceNamePattern = InvoiceNameFields.CreateDefaultPattern();
         }
 
         return settings;

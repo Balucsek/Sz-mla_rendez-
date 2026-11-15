@@ -4,6 +4,9 @@
              ShutdownMode="OnMainWindowClose"
              StartupUri="MainWindow.xaml">
     <Application.Resources>
+        <Style TargetType="{x:Type Window}">
+            <Setter Property="Icon" Value="pack://application:,,,/Assets/InvoiceManager.ico" />
+        </Style>
         <SolidColorBrush x:Key="CanvasBrush" Color="#F4F6F8" />
         <SolidColorBrush x:Key="InkBrush" Color="#172B4D" />
         <SolidColorBrush x:Key="MutedBrush" Color="#6B778C" />

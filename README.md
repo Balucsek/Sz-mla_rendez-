@@ -43,10 +43,30 @@ Ehhez WIA-kompatibilis scanner és a gyártó Windows-illesztőprogramja szüks�
 A gyors szkennelés jelenleg egy oldalt olvas be; a többoldalas adagoló kezelése és
 az oldalak egy PDF-be fűzése még nincs megvalósítva.
 
-Az alkalmazás a szöveges PDF-ekből kiolvassa és megmutatja a tartalmat; a fájlnév
-ajánlásához az első felismerhető dátumot használja. A képként beszkennelt PDF-ekhez
-egyelőre OCR szükséges. A `IPdfInvoiceReader` interfész bővítési pont OCR- vagy
-helyi LLM-alapú elemzés bekötéséhez.
+## Helyi AI-számlaelemzés
+
+A Beállításokban kapcsolható be az AI elemzés. Ehhez telepített és futó Ollama
+szükséges; letöltési és telepítési útmutató a Beállítások AI csoportjában található.
+Támogatott modellek: `granite3.2-vision`,
+`qwen2.5vl:3b` és `qwen2.5vl:7b`. A még nem telepített modell kiválasztásakor
+az alkalmazás felajánlja annak letöltését.
+
+Az elemzés a PDF oldalait képpé alakítja, majd az Ollama helyi API-ján keresztül
+keresi meg a számla dátumát, vevőjét, eladóját, teljes fizetendő összegét és
+számlaszámát. Többoldalas PDF esetén minden oldalt külön képpé alakít és külön
+elemez, majd egyesíti a felismert mezőket. A PDF-ből kinyert szöveget is felhasználja.
+Az AI elemzési utasítás és a képfelbontás (DPI) a Beállításokban állítható.
+Ha az AI felismeri a számla dátumát, az iktatási év és hónap automatikusan erre
+áll be; hiányzó dátumnál az előző dokumentum választása marad, az első dokumentumnál
+pedig az aktuális dátum az alapérték. Az adatok az iktatás előtt szerkeszthetők; a hiányzó mezőket sárga
+figyelmeztetés jelzi. A fájlnév a Beállításokban összeállított mezősorrendből készül,
+az elemeket aláhúzás választja el. Az elemzés az Ollama helyi szolgáltatásához
+csatlakozik (`127.0.0.1`), a számlaképek nem kerülnek külső szolgáltatáshoz.
+Sikertelen elemzésnél az ikonokkal újrapróbálható az elemzés vagy új utasítás adható
+meg. Az új utasításos újrapróbálásnál a DPI is külön módosítható; az egyszeri
+utasítás- és DPI-választás a mentett beállításokat nem változtatja meg.
+Az aktuális számla elemzése közben a várólistán lévő további számlák elemzése is
+elindul, eredményeik csak memóriában maradnak az alkalmazás futása alatt.
 
 Az „Előzőhöz fűzés” az aktuális PDF oldalait az előző iktatott PDF végére illeszti.
 Ha az eredeti fájl megőrzése ki van kapcsolva, sikeres összeillesztés után az eredeti

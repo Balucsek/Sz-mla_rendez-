@@ -3,11 +3,15 @@ using System.ComponentModel;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Runtime.InteropServices;
+using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
+using Docnet.Core.Exceptions;
 using PdfSharpCore.Pdf;
 using PdfSharpCore.Pdf.IO;
 using InvoiceManager.Services;
@@ -30,10 +34,15 @@ public partial class MainWindow : Window
 
     private readonly IPdfInvoiceReader _pdfInvoiceReader = new PdfInvoiceReader();
     private readonly ScannerService _scannerService = new();
+    private readonly OllamaService _ollamaService = new();
     private readonly UserSettingsService _settingsService = new();
+    private readonly SemaphoreSlim _analysisSemaphore = new(1, 1);
+    private readonly System.Collections.Generic.Dictionary<string, Task<InvoiceAnalysisResult>> _analysisTasks =
+        new(StringComparer.OrdinalIgnoreCase);
     private AppSettings _settings = AppSettings.CreateDefault();
     private System.Collections.Generic.List<ScannerDevice> _availableScanners = new();
     private InvoiceRegistrationWindow? _registrationDialog;
+    private CancellationTokenSource? _analysisCancellation;
     private bool _allowWindowClose;
     private string _lastInputFolder = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
     private int _lastSelectedYear = DateTime.Now.Year;
@@ -162,12 +171,20 @@ public partial class MainWindow : Window
             }
 
             _pendingPaths = pdfPaths;
+            PrepareInvoiceAnalysisQueue();
             SourceFolderLabel.Text = folder;
             ShowPanel(IntakePanel);
             if (_pendingPaths.Count == 0)
             {
                 CurrentPdfLabel.Text = "A kiválasztott mappában nincs PDF";
                 PdfPreview.Source = null;
+                ReturnToMenu();
+                MessageBox.Show(
+                    this,
+                    "A kiválasztott mappában nincs iktatandó PDF számla.",
+                    "Nincs feldolgozandó számla",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
                 return;
             }
 
@@ -228,9 +245,11 @@ public partial class MainWindow : Window
             currentPath,
             extractedText,
             _pdfInvoiceReader.SuggestFileName(currentPath, extractedText),
+            _settings.InvoiceNamePattern,
             _lastSelectedYear,
             _lastSelectedMonth,
-            RegisteredInvoices.Any(invoice => File.Exists(invoice.DestinationPath)))
+            RegisteredInvoices.Any(invoice => File.Exists(invoice.DestinationPath)),
+            _settings.AiAnalysisEnabled)
         {
             Owner = this
         };
@@ -238,6 +257,9 @@ public partial class MainWindow : Window
         dialog.CancelRequested += (_, _) => CancelRegistrationDialog(dialog);
         dialog.RegistrationRequested += (_, _) => ProcessCurrentInvoice(dialog);
         dialog.AppendRequested += (_, _) => ProcessCurrentInvoice(dialog);
+        dialog.AiRetryRequested += (_, _) => RetryCurrentInvoiceAnalysis(dialog, currentPath);
+        dialog.AiRetryWithInstructionsRequested += (_, _) =>
+            RetryCurrentInvoiceAnalysisWithInstructions(dialog, currentPath);
         dialog.Closed += (_, _) =>
         {
             if (ReferenceEquals(_registrationDialog, dialog))
@@ -247,6 +269,202 @@ public partial class MainWindow : Window
             }
         };
         dialog.Show();
+        if (_settings.AiAnalysisEnabled)
+        {
+            _ = ApplyCurrentInvoiceAnalysisAsync(dialog, currentPath);
+        }
+    }
+
+    private void PrepareInvoiceAnalysisQueue(
+        string? currentInvoiceInstruction = null,
+        int? currentInvoiceImageDpi = null)
+    {
+        CancelInvoiceAnalysisQueue();
+        if (!_settings.AiAnalysisEnabled || _pendingPaths.Count == 0)
+        {
+            return;
+        }
+
+        _analysisCancellation = new CancellationTokenSource();
+        var cancellationToken = _analysisCancellation.Token;
+        for (var index = 0; index < _pendingPaths.Count; index++)
+        {
+            var path = _pendingPaths[index];
+            var instruction = index == 0 && currentInvoiceInstruction is not null
+                ? currentInvoiceInstruction
+                : _settings.AiAnalysisInstruction;
+            var imageDpi = index == 0 && currentInvoiceImageDpi.HasValue
+                ? currentInvoiceImageDpi.Value
+                : _settings.AiImageDpi;
+            var analysisTask = AnalyzeQueuedInvoiceAsync(
+                path,
+                _settings.LlmModel,
+                instruction,
+                imageDpi,
+                cancellationToken);
+            _analysisTasks[path] = analysisTask;
+            _ = analysisTask.ContinueWith(
+                task => _ = task.Exception,
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+        }
+    }
+
+    private async void RetryCurrentInvoiceAnalysis(InvoiceRegistrationWindow dialog, string path)
+    {
+        if (!ReferenceEquals(_registrationDialog, dialog))
+        {
+            return;
+        }
+
+        dialog.StartAiAnalysis();
+        PrepareInvoiceAnalysisQueue();
+        await ApplyCurrentInvoiceAnalysisAsync(dialog, path);
+    }
+
+    private async void RetryCurrentInvoiceAnalysisWithInstructions(
+        InvoiceRegistrationWindow dialog,
+        string path)
+    {
+        if (!ReferenceEquals(_registrationDialog, dialog))
+        {
+            return;
+        }
+
+        var instructionDialog = new AiInstructionWindow(
+            _settings.AiAnalysisInstruction,
+            _settings.AiImageDpi)
+        {
+            Owner = dialog
+        };
+        if (instructionDialog.ShowDialog() != true ||
+            !ReferenceEquals(_registrationDialog, dialog))
+        {
+            return;
+        }
+
+        dialog.StartAiAnalysis();
+        PrepareInvoiceAnalysisQueue(
+            instructionDialog.Instruction,
+            instructionDialog.SelectedImageDpi);
+        await ApplyCurrentInvoiceAnalysisAsync(dialog, path);
+    }
+
+    private async Task<InvoiceAnalysisResult> AnalyzeQueuedInvoiceAsync(
+        string path,
+        string model,
+        string instruction,
+        int imageDpi,
+        CancellationToken cancellationToken)
+    {
+        await _analysisSemaphore.WaitAsync(cancellationToken);
+        try
+        {
+            var extractedText = await Task.Run(
+                () => _pdfInvoiceReader.ReadText(path),
+                cancellationToken);
+            return await _ollamaService.AnalyzeInvoiceAsync(
+                path,
+                extractedText,
+                instruction,
+                model,
+                imageDpi,
+                cancellationToken);
+        }
+        finally
+        {
+            _analysisSemaphore.Release();
+        }
+    }
+
+    private async Task ApplyCurrentInvoiceAnalysisAsync(InvoiceRegistrationWindow dialog, string path)
+    {
+        if (!_analysisTasks.TryGetValue(path, out var analysisTask))
+        {
+            dialog.ShowAiAnalysisError("Az AI elemzési feladat nem indult el.");
+            return;
+        }
+
+        try
+        {
+            var analysis = await analysisTask;
+            if (ReferenceEquals(_registrationDialog, dialog))
+            {
+                dialog.ApplyAiAnalysis(analysis);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (HttpRequestException ex)
+        {
+            if (ReferenceEquals(_registrationDialog, dialog))
+            {
+                dialog.ShowAiAnalysisError($"Az Ollama elemzése nem sikerült: {ex.Message}");
+            }
+        }
+        catch (IOException ex)
+        {
+            if (ReferenceEquals(_registrationDialog, dialog))
+            {
+                dialog.ShowAiAnalysisError($"A PDF képpé alakítása nem sikerült: {ex.Message}");
+            }
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            if (ReferenceEquals(_registrationDialog, dialog))
+            {
+                dialog.ShowAiAnalysisError($"A PDF nem olvasható: {ex.Message}");
+            }
+        }
+        catch (InvalidOperationException ex)
+        {
+            if (ReferenceEquals(_registrationDialog, dialog))
+            {
+                dialog.ShowAiAnalysisError($"Az AI elemzés nem sikerült: {ex.Message}");
+            }
+        }
+        catch (JsonException ex)
+        {
+            if (ReferenceEquals(_registrationDialog, dialog))
+            {
+                dialog.ShowAiAnalysisError($"Az Ollama válasza nem értelmezhető: {ex.Message}");
+            }
+        }
+        catch (NotSupportedException ex)
+        {
+            if (ReferenceEquals(_registrationDialog, dialog))
+            {
+                dialog.ShowAiAnalysisError($"A PDF képpé alakítása nem támogatott: {ex.Message}");
+            }
+        }
+        catch (DocnetException ex)
+        {
+            if (ReferenceEquals(_registrationDialog, dialog))
+            {
+                dialog.ShowAiAnalysisError($"A PDF képpé alakítása nem sikerült: {ex.Message}");
+            }
+        }
+        catch (ArgumentException ex)
+        {
+            if (ReferenceEquals(_registrationDialog, dialog))
+            {
+                dialog.ShowAiAnalysisError($"A PDF képpé alakítása nem sikerült: {ex.Message}");
+            }
+        }
+    }
+
+    private void CancelInvoiceAnalysisQueue()
+    {
+        if (_analysisCancellation is not null)
+        {
+            _analysisCancellation.Cancel();
+            _analysisCancellation.Dispose();
+            _analysisCancellation = null;
+        }
+
+        _analysisTasks.Clear();
     }
 
     private void ProcessCurrentInvoice(InvoiceRegistrationWindow dialog)
@@ -297,13 +515,13 @@ public partial class MainWindow : Window
         dialog.Close();
         if (_pendingPaths.Count == 0)
         {
+            ReturnToMenu();
             MessageBox.Show(
                 this,
                 "A kiválasztott mappa minden PDF számlájának feldolgozása befejeződött.",
                 "Iktatás kész",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
-            ReturnToMenu();
             return;
         }
 
@@ -317,8 +535,6 @@ public partial class MainWindow : Window
             return;
         }
 
-        _registrationDialog = null;
-        dialog.Close();
         ReturnToMenu();
     }
 
@@ -594,15 +810,20 @@ public partial class MainWindow : Window
 
     private void ReturnToMenu()
     {
-        if (_registrationDialog is not null)
-        {
-            var dialog = _registrationDialog;
-            _registrationDialog = null;
-            dialog.Close();
-        }
-
+        var dialog = _registrationDialog;
+        _registrationDialog = null;
+        System.Windows.Application.Current.MainWindow = this;
         PdfPreview.Source = null;
         ShowPanel(MenuPanel);
+        WindowState = WindowState.Maximized;
+        if (!IsVisible)
+        {
+            Show();
+        }
+
+        CancelInvoiceAnalysisQueue();
+        dialog?.Close();
+        Activate();
     }
 
     private void ShowPanel(UIElement panel)

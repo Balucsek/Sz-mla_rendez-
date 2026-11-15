@@ -1,0 +1,66 @@
+<Window x:Class="InvoiceManager.OllamaInstructionsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Ollama telepítési instrukció"
+        Width="620"
+        Height="430"
+        MinWidth="540"
+        MinHeight="380"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="CanResize"
+        Background="#F4F6F8">
+    <Grid Margin="28">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0"
+                   Text="Ollama telepítési instrukció"
+                   FontSize="26"
+                   FontWeight="Bold"
+                   Foreground="#172B4D"
+                   Margin="0,0,0,18" />
+
+        <StackPanel Grid.Row="1">
+            <TextBlock TextWrapping="Wrap"
+                       Foreground="#344563"
+                       FontSize="15">
+                <Run Text="1. Töltse le és telepítse az Ollama Windows változatát a hivatalos oldalról:" />
+            </TextBlock>
+            <TextBlock Margin="0,8,0,18" FontSize="15">
+                <Hyperlink NavigateUri="https://ollama.com/download/windows"
+                           RequestNavigate="DownloadLink_RequestNavigate">
+                    https://ollama.com/download/windows
+                </Hyperlink>
+            </TextBlock>
+            <TextBlock TextWrapping="Wrap"
+                       Foreground="#344563"
+                       FontSize="15"
+                       Margin="0,0,0,12">
+                <Run Text="2. Indítsa el az Ollamát. Ez az alkalmazás a helyi API-t használja a " />
+                <Run FontWeight="SemiBold" Text="http://127.0.0.1:11434" />
+                <Run Text=" címen; a számlák és a képek nem kerülnek külső szolgáltatásba." />
+            </TextBlock>
+            <TextBlock TextWrapping="Wrap"
+                       Foreground="#344563"
+                       FontSize="15"
+                       Margin="0,0,0,12">
+                <Run Text="3. Nyissa meg a Beállításokat, kapcsolja be az AI elemzést, majd válasszon egy modellt. A hiányzó modellek szürkén jelennek meg; kiválasztásukkor az Ollama letölti őket." />
+            </TextBlock>
+            <TextBlock TextWrapping="Wrap"
+                       Foreground="#6B778C"
+                       FontSize="13">
+                <Run Text="Elérhető modellek: granite3.2-vision, qwen2.5vl:3b és qwen2.5vl:7b. A letöltési méret és a feldolgozási sebesség a modelltől és a számítógép erőforrásaitól függ." />
+            </TextBlock>
+        </StackPanel>
+
+        <Button Grid.Row="2"
+                Content="Bezárás"
+                HorizontalAlignment="Right"
+                Background="#53657F"
+                Margin="0,18,0,0"
+                Click="CloseButton_Click" />
+    </Grid>
+</Window>
