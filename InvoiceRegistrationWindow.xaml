@@ -1,0 +1,100 @@
+<Window x:Class="InvoiceManager.InvoiceRegistrationWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Számla iktatása"
+        Width="720"
+        Height="610"
+        MinWidth="620"
+        MinHeight="540"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="CanResize"
+        Background="#F4F6F8">
+    <Grid Margin="28">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="0,0,0,20">
+            <TextBlock Text="Számla iktatása"
+                       FontSize="26"
+                       FontWeight="Bold"
+                       Foreground="#172B4D" />
+            <TextBlock x:Name="SourceNameLabel"
+                       Foreground="#6B778C"
+                       TextTrimming="CharacterEllipsis"
+                       Margin="0,6,0,0" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="1" Margin="0,0,0,18">
+            <TextBlock Text="Javasolt új fájlnév"
+                       FontWeight="SemiBold"
+                       Foreground="#344563"
+                       Margin="0,0,0,7" />
+            <TextBox x:Name="FileNameTextBox" />
+        </StackPanel>
+
+        <Grid Grid.Row="2" Margin="0,0,0,18">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="18" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0">
+                <TextBlock Text="Év" FontWeight="SemiBold" Foreground="#344563" Margin="0,0,0,7" />
+                <ComboBox ItemsSource="{Binding Years}"
+                          SelectedItem="{Binding SelectedYear, Mode=TwoWay}" />
+            </StackPanel>
+            <StackPanel Grid.Column="2">
+                <TextBlock Text="Hónap" FontWeight="SemiBold" Foreground="#344563" Margin="0,0,0,7" />
+                <ComboBox ItemsSource="{Binding Months}"
+                          DisplayMemberPath="DisplayName"
+                          SelectedValuePath="Number"
+                          SelectedValue="{Binding SelectedMonth, Mode=TwoWay}" />
+            </StackPanel>
+        </Grid>
+
+        <Border Grid.Row="3"
+                Background="White"
+                BorderBrush="#E0E5EC"
+                BorderThickness="1"
+                CornerRadius="7"
+                Padding="14">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Top"
+                           Text="Kiolvasott PDF-szöveg (előnézet)"
+                           FontWeight="SemiBold"
+                           Foreground="#344563"
+                           Margin="0,0,0,9" />
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <TextBlock x:Name="ExtractedTextBlock"
+                               Foreground="#53657F"
+                               TextWrapping="Wrap" />
+                </ScrollViewer>
+            </DockPanel>
+        </Border>
+
+        <StackPanel Grid.Row="4" Margin="0,20,0,0">
+            <TextBlock Text="Célmappa: kiválasztott mappa\év\hónap"
+                       Foreground="#6B778C"
+                       FontSize="12"
+                       Margin="0,0,0,13" />
+            <WrapPanel HorizontalAlignment="Right">
+                <Button Content="Megszakítás"
+                        Background="#53657F"
+                        Margin="0,0,10,0"
+                        Click="CancelButton_Click" />
+                <Button x:Name="AppendButton"
+                        Content="Előzőhöz fűzés"
+                        Background="#53657F"
+                        Margin="0,0,10,0"
+                        Click="AppendButton_Click" />
+                <Button Content="Iktatás"
+                        Click="RegisterButton_Click" />
+            </WrapPanel>
+        </StackPanel>
+    </Grid>
+</Window>
