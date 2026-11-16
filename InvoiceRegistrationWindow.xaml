@@ -30,10 +30,19 @@
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
             <StackPanel>
                 <StackPanel Margin="0,0,0,14">
-                    <TextBlock Text="Javasolt új fájlnév"
-                               FontWeight="SemiBold"
-                               Foreground="#344563"
-                               Margin="0,0,0,6" />
+                    <DockPanel Margin="0,0,0,6">
+                        <TextBlock x:Name="DuplicateWarningIcon"
+                                   DockPanel.Dock="Right"
+                                   Text="⚠"
+                                   FontSize="18"
+                                   FontWeight="Bold"
+                                   Foreground="#D6A100"
+                                   ToolTip="Ilyen nevű számla már létezik a kiválasztott célmappában."
+                                   Visibility="Collapsed" />
+                        <TextBlock Text="Javasolt új fájlnév"
+                                   FontWeight="SemiBold"
+                                   Foreground="#344563" />
+                    </DockPanel>
                     <TextBox x:Name="FileNameTextBox"
                              TextChanged="FileNameTextBox_TextChanged" />
                 </StackPanel>
@@ -48,7 +57,8 @@
                         <TextBlock Text="Év" FontWeight="SemiBold" Foreground="#344563" Margin="0,0,0,6" />
                         <ComboBox x:Name="YearComboBox"
                                   ItemsSource="{Binding Years}"
-                                  SelectedItem="{Binding SelectedYear, Mode=TwoWay}" />
+                                  SelectedItem="{Binding SelectedYear, Mode=TwoWay}"
+                                  SelectionChanged="DestinationChanged" />
                     </StackPanel>
                     <StackPanel Grid.Column="2">
                         <TextBlock Text="Hónap" FontWeight="SemiBold" Foreground="#344563" Margin="0,0,0,6" />
@@ -56,7 +66,8 @@
                                   ItemsSource="{Binding Months}"
                                   DisplayMemberPath="DisplayName"
                                   SelectedValuePath="Number"
-                                  SelectedValue="{Binding SelectedMonth, Mode=TwoWay}" />
+                                  SelectedValue="{Binding SelectedMonth, Mode=TwoWay}"
+                                  SelectionChanged="DestinationChanged" />
                     </StackPanel>
                 </Grid>
 
@@ -219,7 +230,8 @@
                         Background="#53657F"
                         Margin="0,0,10,0"
                         Click="AppendButton_Click" />
-                <Button Content="Iktatás"
+                <Button x:Name="RegisterButton"
+                        Content="Iktatás"
                         Click="RegisterButton_Click" />
             </WrapPanel>
         </StackPanel>

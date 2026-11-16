@@ -12,7 +12,8 @@ namespace InvoiceManager;
 public enum RegistrationAction
 {
     Register,
-    AppendToPrevious
+    AppendToPrevious,
+    Modify
 }
 
 public partial class InvoiceRegistrationWindow : Window
@@ -22,6 +23,7 @@ public partial class InvoiceRegistrationWindow : Window
     public event EventHandler? AppendRequested;
     public event EventHandler? AiRetryRequested;
     public event EventHandler? AiRetryWithInstructionsRequested;
+    public event EventHandler? DestinationChangedByUser;
 
     public sealed class MonthOption
     {
@@ -35,6 +37,7 @@ public partial class InvoiceRegistrationWindow : Window
     public int SelectedMonth { get; set; }
     public RegistrationAction RequestedAction { get; private set; } = RegistrationAction.Register;
     public string NewFileName => FileNameTextBox.Text.Trim();
+    public bool IsEditingRegisteredInvoice { get; private set; }
 
     private readonly bool _aiAnalysisEnabled;
     private IReadOnlyList<string> _namePattern = Array.Empty<string>();
@@ -50,7 +53,8 @@ public partial class InvoiceRegistrationWindow : Window
         int selectedYear,
         int selectedMonth,
         bool canAppend,
-        bool aiAnalysisEnabled)
+        bool aiAnalysisEnabled,
+        bool isEditingRegisteredInvoice = false)
     {
         InitializeComponent();
         _aiAnalysisEnabled = aiAnalysisEnabled;
@@ -76,12 +80,15 @@ public partial class InvoiceRegistrationWindow : Window
 
         SelectedYear = selectedYear;
         SelectedMonth = selectedMonth;
+        IsEditingRegisteredInvoice = isEditingRegisteredInvoice;
         DataContext = this;
         SourceNameLabel.Text = Path.GetFileName(sourcePath);
         _updatingFileName = true;
         FileNameTextBox.Text = suggestedName;
         _updatingFileName = false;
         AppendButton.IsEnabled = canAppend;
+        AppendButton.Visibility = isEditingRegisteredInvoice ? Visibility.Collapsed : Visibility.Visible;
+        RegisterButton.Content = isEditingRegisteredInvoice ? "Módosítás" : "Iktatás";
         AiAnalysisPanel.Visibility = aiAnalysisEnabled ? Visibility.Visible : Visibility.Collapsed;
         AiProcessingPanel.Visibility = aiAnalysisEnabled ? Visibility.Visible : Visibility.Collapsed;
         InvoiceFieldsPanel.Visibility = Visibility.Collapsed;
@@ -124,6 +131,23 @@ public partial class InvoiceRegistrationWindow : Window
         AiProcessingPanel.Visibility = Visibility.Visible;
     }
 
+    public void ShowDuplicateWarning(bool show)
+    {
+        DuplicateWarningIcon.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    public void UpdateSourcePath(string sourcePath)
+    {
+        SourceNameLabel.Text = Path.GetFileName(sourcePath);
+    }
+
+    public void SetEditingMode(bool isEditing)
+    {
+        IsEditingRegisteredInvoice = isEditing;
+        RegisterButton.Content = isEditing ? "Módosítás" : "Iktatás";
+        AppendButton.Visibility = isEditing ? Visibility.Collapsed : Visibility.Visible;
+    }
+
     public void ApplyAiAnalysis(InvoiceAnalysisResult result)
     {
         if (!_aiAnalysisEnabled)
@@ -152,6 +176,7 @@ public partial class InvoiceRegistrationWindow : Window
         InvoiceFieldsPanel.Visibility = Visibility.Visible;
         UpdateAllFieldStatuses();
         RefreshFileNameFromPattern();
+        DestinationChangedByUser?.Invoke(this, EventArgs.Empty);
     }
 
     private static bool TryParseInvoiceDate(string? value, out DateTime invoiceDate)
@@ -204,7 +229,13 @@ public partial class InvoiceRegistrationWindow : Window
         if (!_updatingFileName)
         {
             _userEditedFileName = true;
+            DestinationChangedByUser?.Invoke(this, EventArgs.Empty);
         }
+    }
+
+    private void DestinationChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        DestinationChangedByUser?.Invoke(this, EventArgs.Empty);
     }
 
     private void UpdateAllFieldStatuses()
@@ -251,7 +282,9 @@ public partial class InvoiceRegistrationWindow : Window
 
     private void RegisterButton_Click(object sender, RoutedEventArgs e)
     {
-        RequestedAction = RegistrationAction.Register;
+        RequestedAction = IsEditingRegisteredInvoice
+            ? RegistrationAction.Modify
+            : RegistrationAction.Register;
         RegistrationRequested?.Invoke(this, EventArgs.Empty);
     }
 

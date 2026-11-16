@@ -151,6 +151,7 @@
                                      ItemsSource="{Binding PendingInvoices}"
                                      BorderThickness="0"
                                      Background="Transparent"
+                                     SelectionChanged="PendingInvoicesList_SelectionChanged"
                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate>
@@ -177,9 +178,11 @@
                                        FontWeight="Bold"
                                        Foreground="#172B4D"
                                        Margin="2,2,2,10" />
-                            <ListBox ItemsSource="{Binding RegisteredInvoices}"
+                            <ListBox x:Name="RegisteredInvoicesList"
+                                     ItemsSource="{Binding RegisteredInvoices}"
                                      BorderThickness="0"
                                      Background="Transparent"
+                                     SelectionChanged="RegisteredInvoicesList_SelectionChanged"
                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate>

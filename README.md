@@ -20,6 +20,30 @@ dotnet publish -c Release -r win-x64 --self-contained true
 Az elkészült futtatható fájl a `bin\Release\net6.0-windows10.0.17763.0\win-x64\publish`
 mappában található. A WebView2 Runtime-ot az önálló kiadás sem tartalmazza.
 
+## Telepítő készítése és telepítése
+
+A `installer\build-installer.ps1` önálló x64-es alkalmazást publikál, majd az Inno
+Setup 6 segítségével telepítőt készít. A buildhez .NET 6 SDK és Inno Setup 6
+szükséges. A parancsfájl futtatása:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\installer\build-installer.ps1
+```
+
+A kész fájl:
+`installer\output\SzamlaRendezoSetup.exe`.
+
+A telepítőben kiválasztható a célmappa; az asztali ikon létrehozása alapértelmezés
+szerint be van jelölve, de kikapcsolható. Az alkalmazás .NET Runtime-ot is tartalmaz,
+ezért azt nem kell külön telepíteni. A WebView2 Runtime szükséges: a telepítő
+ellenőrzi, és hiány esetén a Microsoft hivatalos bootstrapperével letölti és
+telepíti. Ehhez internetkapcsolat szükséges.
+
+Az Ollama telepítése opcionális, és a telepítőben külön bejelölhető. Kiválasztásakor
+hiányzó Ollama esetén az alkalmazás a hivatalos Ollama telepítőt tölti le és indítja
+el. Az AI-modellek külön letöltendők az alkalmazás Beállítások ablakából; a modell
+fájlok nincsenek a telepítőbe csomagolva.
+
 Az iktatás során válassza ki a bemeneti mappát. A sikeresen iktatott PDF-ek a
 Beállításokban megadott célmappán belül az `év\hónap` almappába kerülnek. Alapértelmezés
 szerint a célmappa a `Dokumentumok\Számlák`. Az „Eredeti fájl megőrzése” kapcsolóval
@@ -71,3 +95,10 @@ elindul, eredményeik csak memóriában maradnak az alkalmazás futása alatt.
 Az „Előzőhöz fűzés” az aktuális PDF oldalait az előző iktatott PDF végére illeszti.
 Ha az eredeti fájl megőrzése ki van kapcsolva, sikeres összeillesztés után az eredeti
 bemeneti fájl törlődik, mert annak tartalma már része az összevont PDF-nek.
+
+Az iktatási listában bármelyik függő vagy már iktatott számlára kattintva megnyitható
+az adott PDF. Már iktatott fájlnál az „Iktatás” helyett „Módosítás” jelenik meg;
+mentéskor a fájl az új név/hely szerint áthelyeződik, az eredeti fájl megőrzésére
+vonatkozó beállítástól függetlenül. Függő számla iktatása után a lista következő sora
+következik. Ha a célmappában már létezik a választott nevű fájl, a figyelmeztetésből
+felülírás, hozzáfűzés, az aktuális számla kihagyása/törlése vagy megszakítás választható.

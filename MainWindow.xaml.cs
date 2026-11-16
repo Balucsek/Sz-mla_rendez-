@@ -44,9 +44,13 @@ public partial class MainWindow : Window
     private InvoiceRegistrationWindow? _registrationDialog;
     private CancellationTokenSource? _analysisCancellation;
     private bool _allowWindowClose;
+    private bool _updatingInvoiceSelection;
     private string _lastInputFolder = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
     private int _lastSelectedYear = DateTime.Now.Year;
     private int _lastSelectedMonth = DateTime.Now.Month;
+    private int _currentPendingIndex;
+    private string? _currentInvoicePath;
+    private RegisteredInvoice? _editingInvoice;
 
     public MainWindow()
     {
@@ -165,12 +169,19 @@ public partial class MainWindow : Window
             _lastInputFolder = folder;
             PendingInvoices.Clear();
             RegisteredInvoices.Clear();
+            _currentPendingIndex = 0;
+            _currentInvoicePath = null;
+            _editingInvoice = null;
             foreach (var path in pdfPaths)
             {
                 PendingInvoices.Add(Path.GetFileName(path));
             }
 
             _pendingPaths = pdfPaths;
+            _updatingInvoiceSelection = true;
+            PendingInvoicesList.SelectedIndex = _pendingPaths.Count > 0 ? 0 : -1;
+            RegisteredInvoicesList.SelectedIndex = -1;
+            _updatingInvoiceSelection = false;
             PrepareInvoiceAnalysisQueue();
             SourceFolderLabel.Text = folder;
             ShowPanel(IntakePanel);
@@ -211,7 +222,17 @@ public partial class MainWindow : Window
             return;
         }
 
-        var currentPath = _pendingPaths[0];
+        _currentPendingIndex = Math.Clamp(_currentPendingIndex, 0, _pendingPaths.Count - 1);
+        OpenInvoice(_pendingPaths[_currentPendingIndex], false, null);
+    }
+
+    private void OpenInvoice(string currentPath, bool isEditing, RegisteredInvoice? invoice)
+    {
+        var oldDialog = _registrationDialog;
+        _registrationDialog = null;
+        oldDialog?.Close();
+        _currentInvoicePath = currentPath;
+        _editingInvoice = invoice;
         CurrentPdfLabel.Text = Path.GetFileName(currentPath);
         PdfPreview.Source = new Uri(currentPath, UriKind.Absolute);
 
@@ -241,15 +262,30 @@ public partial class MainWindow : Window
             extractedText = string.Empty;
         }
 
+        var suggestedName = isEditing
+            ? Path.GetFileNameWithoutExtension(currentPath)
+            : _pdfInvoiceReader.SuggestFileName(currentPath, extractedText);
+        var selectedYear = _lastSelectedYear;
+        var selectedMonth = _lastSelectedMonth;
+        if (isEditing &&
+            int.TryParse(Path.GetFileName(Path.GetDirectoryName(currentPath)), out var invoiceMonth) &&
+            invoiceMonth is >= 1 and <= 12 &&
+            int.TryParse(Path.GetFileName(Path.GetDirectoryName(Path.GetDirectoryName(currentPath))), out var invoiceYear))
+        {
+            selectedYear = invoiceYear;
+            selectedMonth = invoiceMonth;
+        }
+
         var dialog = new InvoiceRegistrationWindow(
             currentPath,
             extractedText,
-            _pdfInvoiceReader.SuggestFileName(currentPath, extractedText),
+            suggestedName,
             _settings.InvoiceNamePattern,
-            _lastSelectedYear,
-            _lastSelectedMonth,
-            RegisteredInvoices.Any(invoice => File.Exists(invoice.DestinationPath)),
-            _settings.AiAnalysisEnabled)
+            selectedYear,
+            selectedMonth,
+            !isEditing && RegisteredInvoices.Any(registeredInvoice => File.Exists(registeredInvoice.DestinationPath)),
+            _settings.AiAnalysisEnabled && !isEditing,
+            isEditing)
         {
             Owner = this
         };
@@ -257,6 +293,7 @@ public partial class MainWindow : Window
         dialog.CancelRequested += (_, _) => CancelRegistrationDialog(dialog);
         dialog.RegistrationRequested += (_, _) => ProcessCurrentInvoice(dialog);
         dialog.AppendRequested += (_, _) => ProcessCurrentInvoice(dialog);
+        dialog.DestinationChangedByUser += (_, _) => RefreshDuplicateWarning(dialog);
         dialog.AiRetryRequested += (_, _) => RetryCurrentInvoiceAnalysis(dialog, currentPath);
         dialog.AiRetryWithInstructionsRequested += (_, _) =>
             RetryCurrentInvoiceAnalysisWithInstructions(dialog, currentPath);
@@ -269,9 +306,84 @@ public partial class MainWindow : Window
             }
         };
         dialog.Show();
-        if (_settings.AiAnalysisEnabled)
+        RefreshDuplicateWarning(dialog);
+        if (_settings.AiAnalysisEnabled && !isEditing)
         {
             _ = ApplyCurrentInvoiceAnalysisAsync(dialog, currentPath);
+        }
+    }
+
+    private void PendingInvoicesList_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (_updatingInvoiceSelection ||
+            IntakePanel.Visibility != Visibility.Visible ||
+            PendingInvoicesList.SelectedIndex < 0 ||
+            PendingInvoicesList.SelectedIndex >= _pendingPaths.Count)
+        {
+            return;
+        }
+
+        var selectedIndex = PendingInvoicesList.SelectedIndex;
+        var selectedPath = _pendingPaths[selectedIndex];
+        if (_editingInvoice is null &&
+            string.Equals(_currentInvoicePath, selectedPath, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        _currentPendingIndex = selectedIndex;
+        _updatingInvoiceSelection = true;
+        RegisteredInvoicesList.SelectedIndex = -1;
+        _updatingInvoiceSelection = false;
+        OpenInvoice(selectedPath, false, null);
+    }
+
+    private void RegisteredInvoicesList_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (_updatingInvoiceSelection ||
+            IntakePanel.Visibility != Visibility.Visible ||
+            RegisteredInvoicesList.SelectedItem is not RegisteredInvoice invoice ||
+            !File.Exists(invoice.DestinationPath))
+        {
+            return;
+        }
+
+        if (ReferenceEquals(_editingInvoice, invoice) &&
+            string.Equals(_currentInvoicePath, invoice.DestinationPath, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        _updatingInvoiceSelection = true;
+        PendingInvoicesList.SelectedIndex = -1;
+        _updatingInvoiceSelection = false;
+        OpenInvoice(invoice.DestinationPath, true, invoice);
+    }
+
+    private void RefreshDuplicateWarning(InvoiceRegistrationWindow dialog)
+    {
+        if (!ReferenceEquals(_registrationDialog, dialog))
+        {
+            return;
+        }
+
+        try
+        {
+            var destinationPath = GetRequestedDestinationPath(
+                dialog.NewFileName,
+                dialog.SelectedYear,
+                dialog.SelectedMonth);
+            var sourcePath = _currentInvoicePath;
+            var isSameFile = sourcePath is not null &&
+                string.Equals(
+                    Path.GetFullPath(sourcePath),
+                    Path.GetFullPath(destinationPath),
+                    StringComparison.OrdinalIgnoreCase);
+            dialog.ShowDuplicateWarning(!isSameFile && File.Exists(destinationPath));
+        }
+        catch (ArgumentException)
+        {
+            dialog.ShowDuplicateWarning(false);
         }
     }
 
@@ -469,23 +581,125 @@ public partial class MainWindow : Window
 
     private void ProcessCurrentInvoice(InvoiceRegistrationWindow dialog)
     {
-        if (!ReferenceEquals(_registrationDialog, dialog) || _pendingPaths.Count == 0)
+        if (!ReferenceEquals(_registrationDialog, dialog) || _currentInvoicePath is null)
         {
             return;
         }
 
-        var currentPath = _pendingPaths[0];
+        var currentPath = _currentInvoicePath;
         _lastSelectedYear = dialog.SelectedYear;
         _lastSelectedMonth = dialog.SelectedMonth;
+        var isEditing = dialog.IsEditingRegisteredInvoice;
         try
         {
-            if (dialog.RequestedAction == RegistrationAction.Register)
+            var destinationPath = dialog.RequestedAction == RegistrationAction.AppendToPrevious
+                ? null
+                : GetRequestedDestinationPath(dialog.NewFileName, dialog.SelectedYear, dialog.SelectedMonth);
+            var duplicateAction = (DuplicateFileAction?)null;
+
+            if (destinationPath is not null &&
+                File.Exists(destinationPath) &&
+                !string.Equals(
+                    Path.GetFullPath(currentPath),
+                    Path.GetFullPath(destinationPath),
+                    StringComparison.OrdinalIgnoreCase))
             {
-                RegisterInvoice(currentPath, dialog.NewFileName, dialog.SelectedYear, dialog.SelectedMonth);
+                var duplicateDialog = new DuplicateInvoiceWindow(destinationPath)
+                {
+                    Owner = dialog
+                };
+                if (duplicateDialog.ShowDialog() != true)
+                {
+                    return;
+                }
+
+                duplicateAction = duplicateDialog.SelectedAction;
+            }
+
+            if (duplicateAction == DuplicateFileAction.DeleteCurrent)
+            {
+                if (!_settings.KeepOriginalFiles)
+                {
+                    File.Delete(currentPath);
+                    if (isEditing && _editingInvoice is not null)
+                    {
+                        _updatingInvoiceSelection = true;
+                        RegisteredInvoices.Remove(_editingInvoice);
+                        _updatingInvoiceSelection = false;
+                        FinishEditingAfterDelete(dialog);
+                        return;
+                    }
+                }
+
+                if (isEditing)
+                {
+                    return;
+                }
+
+                CompletePendingInvoice(dialog);
+                return;
+            }
+
+            if (dialog.RequestedAction == RegistrationAction.AppendToPrevious)
+            {
+                AppendToPreviousInvoice(currentPath);
+            }
+            else if (duplicateAction == DuplicateFileAction.Append && destinationPath is not null)
+            {
+                var sourceRemoved = AppendToInvoice(
+                    destinationPath,
+                    currentPath,
+                    !isEditing && _settings.KeepOriginalFiles);
+                if (isEditing && _editingInvoice is not null)
+                {
+                    if (!sourceRemoved)
+                    {
+                        return;
+                    }
+
+                    _updatingInvoiceSelection = true;
+                    RegisteredInvoices.Remove(_editingInvoice);
+                    var targetInvoice = RegisteredInvoices.FirstOrDefault(invoice =>
+                        string.Equals(invoice.DestinationPath, destinationPath, StringComparison.OrdinalIgnoreCase));
+                    RegisteredInvoices.Insert(0, new RegisteredInvoice
+                    {
+                        NewName = targetInvoice?.NewName ?? Path.GetFileName(destinationPath),
+                        OriginalName = $"({Path.GetFileName(currentPath)})",
+                        StatusNote = "Hozzáfűzve a kiválasztott számlához",
+                        DestinationPath = destinationPath
+                    });
+                    _updatingInvoiceSelection = false;
+
+                    SelectEditedInvoice(dialog, destinationPath);
+                    return;
+                }
+
+                var appendedInvoice = RegisteredInvoices.FirstOrDefault(invoice =>
+                    string.Equals(invoice.DestinationPath, destinationPath, StringComparison.OrdinalIgnoreCase));
+                RegisteredInvoices.Insert(0, new RegisteredInvoice
+                {
+                    NewName = appendedInvoice?.NewName ?? Path.GetFileName(destinationPath),
+                    OriginalName = $"({Path.GetFileName(currentPath)})",
+                    StatusNote = "Hozzáfűzve a már iktatott számlához",
+                    DestinationPath = destinationPath
+                });
+            }
+            else if (isEditing && _editingInvoice is not null && destinationPath is not null)
+            {
+                MoveRegisteredInvoice(
+                    dialog,
+                    _editingInvoice,
+                    destinationPath,
+                    duplicateAction == DuplicateFileAction.Overwrite);
+                return;
+            }
+            else if (duplicateAction == DuplicateFileAction.Overwrite && destinationPath is not null)
+            {
+                RegisterInvoiceAtPath(currentPath, dialog.NewFileName, destinationPath, true);
             }
             else
             {
-                AppendToPreviousInvoice(currentPath);
+                RegisterInvoice(currentPath, dialog.NewFileName, dialog.SelectedYear, dialog.SelectedMonth);
             }
         }
         catch (IOException ex)
@@ -509,8 +723,29 @@ public partial class MainWindow : Window
             return;
         }
 
-        PendingInvoices.RemoveAt(0);
-        _pendingPaths.RemoveAt(0);
+        if (isEditing)
+        {
+            return;
+        }
+
+        CompletePendingInvoice(dialog);
+    }
+
+    private void CompletePendingInvoice(InvoiceRegistrationWindow dialog)
+    {
+        var completedIndex = _currentPendingIndex;
+        if (completedIndex < 0 || completedIndex >= _pendingPaths.Count)
+        {
+            return;
+        }
+
+        _updatingInvoiceSelection = true;
+        PendingInvoices.RemoveAt(completedIndex);
+        _pendingPaths.RemoveAt(completedIndex);
+        _currentPendingIndex = Math.Min(completedIndex, _pendingPaths.Count - 1);
+        _updatingInvoiceSelection = false;
+        _currentInvoicePath = null;
+        _editingInvoice = null;
         _registrationDialog = null;
         dialog.Close();
         if (_pendingPaths.Count == 0)
@@ -525,7 +760,49 @@ public partial class MainWindow : Window
             return;
         }
 
+        _updatingInvoiceSelection = true;
+        RegisteredInvoicesList.SelectedIndex = -1;
+        PendingInvoicesList.SelectedIndex = _currentPendingIndex;
+        _updatingInvoiceSelection = false;
         Dispatcher.BeginInvoke(new Action(ShowCurrentInvoice), DispatcherPriority.Background);
+    }
+
+    private void FinishEditingAfterDelete(InvoiceRegistrationWindow dialog)
+    {
+        _registrationDialog = null;
+        _currentInvoicePath = null;
+        _editingInvoice = null;
+        dialog.Close();
+        if (_pendingPaths.Count > 0)
+        {
+            _currentPendingIndex = Math.Clamp(_currentPendingIndex, 0, _pendingPaths.Count - 1);
+            _updatingInvoiceSelection = true;
+            RegisteredInvoicesList.SelectedIndex = -1;
+            PendingInvoicesList.SelectedIndex = _currentPendingIndex;
+            _updatingInvoiceSelection = false;
+            ShowCurrentInvoice();
+            return;
+        }
+
+        ReturnToMenu();
+    }
+
+    private void SelectEditedInvoice(InvoiceRegistrationWindow dialog, string destinationPath)
+    {
+        var selectedInvoice = RegisteredInvoices.FirstOrDefault(invoice =>
+            string.Equals(invoice.DestinationPath, destinationPath, StringComparison.OrdinalIgnoreCase));
+        if (selectedInvoice is null)
+        {
+            throw new InvalidOperationException("A módosított számla nem található az iktatott számlák listájában.");
+        }
+
+        _editingInvoice = selectedInvoice;
+        _currentInvoicePath = destinationPath;
+        dialog.UpdateSourcePath(destinationPath);
+        _updatingInvoiceSelection = true;
+        PendingInvoicesList.SelectedIndex = -1;
+        RegisteredInvoicesList.SelectedItem = selectedInvoice;
+        _updatingInvoiceSelection = false;
     }
 
     private void CancelRegistrationDialog(InvoiceRegistrationWindow dialog)
@@ -567,6 +844,109 @@ public partial class MainWindow : Window
         return destinationPath;
     }
 
+    private string RegisterInvoiceAtPath(
+        string sourcePath,
+        string requestedName,
+        string destinationPath,
+        bool overwrite)
+    {
+        var fileName = SanitizePdfFileName(requestedName);
+        destinationPath = Path.GetFullPath(destinationPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
+        if (string.Equals(
+                Path.GetFullPath(sourcePath),
+                destinationPath,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("A forrás és a cél ugyanaz a fájl.");
+        }
+
+        if (_settings.KeepOriginalFiles)
+        {
+            File.Copy(sourcePath, destinationPath, overwrite);
+        }
+        else
+        {
+            File.Move(sourcePath, destinationPath, overwrite);
+        }
+
+        _updatingInvoiceSelection = true;
+        for (var index = RegisteredInvoices.Count - 1; index >= 0; index--)
+        {
+            if (string.Equals(
+                    RegisteredInvoices[index].DestinationPath,
+                    destinationPath,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                RegisteredInvoices.RemoveAt(index);
+            }
+        }
+
+        RegisteredInvoices.Insert(0, new RegisteredInvoice
+        {
+            NewName = fileName,
+            OriginalName = $"({Path.GetFileName(sourcePath)})",
+            DestinationPath = destinationPath
+        });
+        _updatingInvoiceSelection = false;
+        return destinationPath;
+    }
+
+    private void MoveRegisteredInvoice(
+        InvoiceRegistrationWindow dialog,
+        RegisteredInvoice invoice,
+        string destinationPath,
+        bool overwrite)
+    {
+        var sourcePath = invoice.DestinationPath;
+        destinationPath = Path.GetFullPath(destinationPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
+        if (!string.Equals(
+                Path.GetFullPath(sourcePath),
+                destinationPath,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            File.Move(sourcePath, destinationPath, overwrite);
+        }
+
+        _updatingInvoiceSelection = true;
+        for (var index = RegisteredInvoices.Count - 1; index >= 0; index--)
+        {
+            var registeredPath = RegisteredInvoices[index].DestinationPath;
+            if (!ReferenceEquals(RegisteredInvoices[index], invoice) &&
+                string.Equals(registeredPath, destinationPath, StringComparison.OrdinalIgnoreCase))
+            {
+                RegisteredInvoices.RemoveAt(index);
+            }
+        }
+
+        var invoiceIndex = RegisteredInvoices.IndexOf(invoice);
+        if (invoiceIndex < 0)
+        {
+            throw new InvalidOperationException("A módosítandó számla nem található az iktatott számlák listájában.");
+        }
+
+        var updatedInvoice = new RegisteredInvoice
+        {
+            NewName = Path.GetFileName(destinationPath),
+            OriginalName = invoice.OriginalName,
+            StatusNote = "Módosítva",
+            DestinationPath = destinationPath
+        };
+        RegisteredInvoices[invoiceIndex] = updatedInvoice;
+        _updatingInvoiceSelection = false;
+        SelectEditedInvoice(dialog, destinationPath);
+        dialog.UpdateSourcePath(destinationPath);
+        dialog.SetEditingMode(true);
+    }
+
+    private string GetRequestedDestinationPath(string requestedName, int year, int month)
+    {
+        var fileName = SanitizePdfFileName(requestedName);
+        var destinationDirectory = Path.Combine(_settings.DestinationFolder, year.ToString(), month.ToString("00"));
+        return Path.GetFullPath(Path.Combine(destinationDirectory, fileName));
+    }
+
     private void AppendToPreviousInvoice(string sourcePath)
     {
         var previousInvoice = RegisteredInvoices.FirstOrDefault(invoice => File.Exists(invoice.DestinationPath));
@@ -575,7 +955,7 @@ public partial class MainWindow : Window
             throw new InvalidOperationException("Nincs olyan korábban iktatott számla, amelyhez hozzáfűzhető lenne.");
         }
 
-        MergePdfFiles(previousInvoice.DestinationPath, sourcePath);
+        AppendToInvoice(previousInvoice.DestinationPath, sourcePath, _settings.KeepOriginalFiles);
         RegisteredInvoices.Insert(0, new RegisteredInvoice
         {
             NewName = previousInvoice.NewName,
@@ -583,15 +963,29 @@ public partial class MainWindow : Window
             StatusNote = "Hozzáfűzve az előző számlához",
             DestinationPath = previousInvoice.DestinationPath
         });
+    }
 
-        if (_settings.KeepOriginalFiles)
+    private bool AppendToInvoice(string destinationPath, string sourcePath, bool keepSource)
+    {
+        if (string.Equals(
+                Path.GetFullPath(destinationPath),
+                Path.GetFullPath(sourcePath),
+                StringComparison.OrdinalIgnoreCase))
         {
-            return;
+            throw new InvalidOperationException("Ugyanazt a PDF-fájlt nem lehet önmagához fűzni.");
+        }
+
+        MergePdfFiles(destinationPath, sourcePath);
+
+        if (keepSource)
+        {
+            return false;
         }
 
         try
         {
             File.Delete(sourcePath);
+            return true;
         }
         catch (IOException ex)
         {
@@ -602,6 +996,7 @@ public partial class MainWindow : Window
                 "Figyelmeztetés",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
+            return false;
         }
         catch (UnauthorizedAccessException ex)
         {
@@ -612,6 +1007,7 @@ public partial class MainWindow : Window
                 "Figyelmeztetés",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
+            return false;
         }
     }
 
